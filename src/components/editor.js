@@ -22,7 +22,7 @@ const LANGUAGE_MODES = {
     go: 'go',
 };
 
-const Editor = ({ socketRef, roomId, language = 'javascript', initialCode = '', onCodeChange, onRunCode }) => {
+const Editor = ({ socket, socketRef, roomId, language = 'javascript', initialCode = '', onCodeChange, onRunCode }) => {
     const editorRef = useRef(null);
     const textareaRef = useRef(null);
     const runCodeRef = useRef(onRunCode);
@@ -64,7 +64,8 @@ const Editor = ({ socketRef, roomId, language = 'javascript', initialCode = '', 
             const code = instance.getValue();
             onCodeChange(code);
             if (origin !== 'setValue') {
-                socketRef.current?.emit(ACTIONS.CODE_CHANGE, {
+                const activeSocket = socket || socketRef?.current;
+                activeSocket?.emit(ACTIONS.CODE_CHANGE, {
                     roomId,
                     code,
                 });
@@ -95,21 +96,23 @@ const Editor = ({ socketRef, roomId, language = 'javascript', initialCode = '', 
         }
     }, [language]);
 
+    // Listen for code changes from other room members
     useEffect(() => {
-        const socket = socketRef.current;
-        if (socket) {
-            socket.on(ACTIONS.CODE_CHANGE, ({ code }) => {
-                if (code !== null && editorRef.current && editorRef.current.getValue() !== code) {
-                    editorRef.current.setValue(code);
-                }
-            });
-        }
+        const activeSocket = socket || socketRef?.current;
+        if (!activeSocket) return;
+
+        const handleCodeChange = ({ code }) => {
+            if (code !== null && editorRef.current && editorRef.current.getValue() !== code) {
+                editorRef.current.setValue(code);
+            }
+        };
+
+        activeSocket.on(ACTIONS.CODE_CHANGE, handleCodeChange);
 
         return () => {
-            socket?.off(ACTIONS.CODE_CHANGE);
+            activeSocket.off(ACTIONS.CODE_CHANGE, handleCodeChange);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [socketRef.current]);
+    }, [socket, socketRef]);
 
     return (
         <div className="w-full h-full relative">

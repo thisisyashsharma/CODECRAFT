@@ -7,7 +7,7 @@ const COLORS = [
     '#8be9fd', '#50fa7b', '#f1fa8c', '#ffb86c',
 ];
 
-const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) => {
+const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisible }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
     const ctxRef = useRef(null);
@@ -19,6 +19,60 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
     const [color, setColor] = useState('#f8f8f2');
     const [strokeWidth, setStrokeWidth] = useState(3);
 
+    // Replay a single stroke on canvas
+    const drawStroke = useCallback((stroke) => {
+        const ctx = ctxRef.current;
+        if (!ctx || !stroke.points || stroke.points.length === 0) return;
+
+        const container = containerRef.current;
+        if (!container) return;
+
+        const rect = container.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
+
+        ctx.beginPath();
+        ctx.strokeStyle = stroke.tool === 'eraser' ? '#0f0f0f' : stroke.color;
+        ctx.lineWidth = stroke.tool === 'eraser' ? stroke.width * 3 : stroke.width;
+        ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
+
+        // Points are stored as ratios (0-1) relative to canvas dimensions
+        const startX = stroke.points[0].x * rect.width;
+        const startY = stroke.points[0].y * rect.height;
+
+        if (stroke.points.length === 1) {
+            ctx.fillStyle = stroke.tool === 'eraser' ? '#0f0f0f' : stroke.color;
+            ctx.arc(startX, startY, (stroke.tool === 'eraser' ? stroke.width * 1.5 : stroke.width) / 2, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            ctx.moveTo(startX, startY);
+
+            for (let i = 1; i < stroke.points.length; i++) {
+                const x = stroke.points[i].x * rect.width;
+                const y = stroke.points[i].y * rect.height;
+                ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+    }, []);
+
+    // Replay all strokes from history
+    const replayAllStrokes = useCallback(() => {
+        const ctx = ctxRef.current;
+        const canvas = canvasRef.current;
+        if (!ctx || !canvas) return;
+
+        const container = containerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        strokesRef.current.forEach((stroke) => {
+            drawStroke(stroke);
+        });
+    }, [drawStroke]);
+
     // Initialize canvas and fit to container
     const initCanvas = useCallback(() => {
         const canvas = canvasRef.current;
@@ -26,6 +80,7 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
         if (!canvas || !container) return;
 
         const rect = container.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
         const dpr = window.devicePixelRatio || 1;
 
         canvas.width = rect.width * dpr;
@@ -41,53 +96,7 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
 
         // Redraw all stored strokes after resize
         replayAllStrokes();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    // Replay a single stroke on canvas
-    const drawStroke = useCallback((stroke) => {
-        const ctx = ctxRef.current;
-        if (!ctx || !stroke.points || stroke.points.length < 2) return;
-
-        const canvas = canvasRef.current;
-        const container = containerRef.current;
-        if (!canvas || !container) return;
-
-        const rect = container.getBoundingClientRect();
-
-        ctx.beginPath();
-        ctx.strokeStyle = stroke.tool === 'eraser' ? '#0f0f0f' : stroke.color;
-        ctx.lineWidth = stroke.tool === 'eraser' ? stroke.width * 3 : stroke.width;
-        ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
-
-        // Points are stored as ratios (0-1) relative to canvas dimensions
-        const startX = stroke.points[0].x * rect.width;
-        const startY = stroke.points[0].y * rect.height;
-        ctx.moveTo(startX, startY);
-
-        for (let i = 1; i < stroke.points.length; i++) {
-            const x = stroke.points[i].x * rect.width;
-            const y = stroke.points[i].y * rect.height;
-            ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-        ctx.globalCompositeOperation = 'source-over';
-    }, []);
-
-    // Replay all strokes from history
-    const replayAllStrokes = useCallback(() => {
-        const ctx = ctxRef.current;
-        const canvas = canvasRef.current;
-        if (!ctx || !canvas) return;
-
-        const container = containerRef.current;
-        const rect = container.getBoundingClientRect();
-        ctx.clearRect(0, 0, rect.width, rect.height);
-
-        strokesRef.current.forEach((stroke) => {
-            drawStroke(stroke);
-        });
-    }, [drawStroke]);
+    }, [replayAllStrokes]);
 
     // Setup canvas on mount and handle resize
     useEffect(() => {
@@ -112,8 +121,8 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
 
     // Socket listeners for receiving remote drawing events
     useEffect(() => {
-        const socket = socketRef.current;
-        if (!socket) return;
+        const activeSocket = socket || socketRef?.current;
+        if (!activeSocket) return;
 
         const handleRemoteDraw = ({ canvasId: incomingCanvasId, stroke }) => {
             if (incomingCanvasId && incomingCanvasId !== canvasId) return;
@@ -143,28 +152,25 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
             }
         };
 
-        socket.on(ACTIONS.CANVAS_DRAW, handleRemoteDraw);
-        socket.on(ACTIONS.CANVAS_CLEAR, handleRemoteClear);
-        socket.on(ACTIONS.CANVAS_SYNC, handleCanvasSync);
+        activeSocket.on(ACTIONS.CANVAS_DRAW, handleRemoteDraw);
+        activeSocket.on(ACTIONS.CANVAS_CLEAR, handleRemoteClear);
+        activeSocket.on(ACTIONS.CANVAS_SYNC, handleCanvasSync);
 
         return () => {
-            socket.off(ACTIONS.CANVAS_DRAW, handleRemoteDraw);
-            socket.off(ACTIONS.CANVAS_CLEAR, handleRemoteClear);
-            socket.off(ACTIONS.CANVAS_SYNC, handleCanvasSync);
+            activeSocket.off(ACTIONS.CANVAS_DRAW, handleRemoteDraw);
+            activeSocket.off(ACTIONS.CANVAS_CLEAR, handleRemoteClear);
+            activeSocket.off(ACTIONS.CANVAS_SYNC, handleCanvasSync);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [socketRef.current, canvasId, drawStroke, replayAllStrokes]);
+    }, [socket, socketRef, canvasId, drawStroke, replayAllStrokes]);
 
     // Convert pointer event to normalized coordinates (0-1 ratios)
     const getPointerPos = (e) => {
         const canvas = canvasRef.current;
         if (!canvas) return { x: 0, y: 0 };
         const rect = canvas.getBoundingClientRect();
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
         return {
-            x: (clientX - rect.left) / rect.width,
-            y: (clientY - rect.top) / rect.height,
+            x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+            y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
         };
     };
 
@@ -211,7 +217,7 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
         }
 
         const points = currentStrokeRef.current;
-        if (points.length >= 2) {
+        if (points.length >= 1) {
             const stroke = {
                 points,
                 color,
@@ -222,7 +228,8 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
             strokesRef.current.push(stroke);
 
             // Emit to peers
-            socketRef.current?.emit(ACTIONS.CANVAS_DRAW, {
+            const activeSocket = socket || socketRef?.current;
+            activeSocket?.emit(ACTIONS.CANVAS_DRAW, {
                 roomId,
                 canvasId,
                 stroke,
@@ -240,7 +247,8 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
             const rect = container.getBoundingClientRect();
             ctx.clearRect(0, 0, rect.width, rect.height);
         }
-        socketRef.current?.emit(ACTIONS.CANVAS_CLEAR, { roomId, canvasId });
+        const activeSocket = socket || socketRef?.current;
+        activeSocket?.emit(ACTIONS.CANVAS_CLEAR, { roomId, canvasId });
     };
 
     const handleDownload = () => {
@@ -364,9 +372,6 @@ const CollabCanvas = ({ socketRef, roomId, canvasId = 'default', isVisible }) =>
                     onPointerMove={handlePointerMove}
                     onPointerUp={handlePointerUp}
                     onPointerLeave={handlePointerUp}
-                    onTouchStart={handlePointerDown}
-                    onTouchMove={handlePointerMove}
-                    onTouchEnd={handlePointerUp}
                     className="absolute inset-0 touch-none"
                     style={{ touchAction: 'none' }}
                 />

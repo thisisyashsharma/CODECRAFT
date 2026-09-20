@@ -5,7 +5,7 @@ import CollabCanvas from "../components/CollabCanvas";
 import WorkspaceTabs from "../components/WorkspaceTabs";
 import { initSocket } from "../socket";
 import ACTIONS from "../Actions";
-import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import {
     Code2,
@@ -77,6 +77,21 @@ const EditorPage = () => {
     const { roomId } = useParams();
     const reactNavigator = useNavigate();
     const { isDark, toggleTheme } = useTheme();
+
+    // Socket instance state (ensures child components re-render and attach listeners reliably)
+    const [socket, setSocket] = useState(null);
+
+    // Persistent username handling so refreshing or direct link doesn't break
+    const username =
+        location.state?.username ||
+        sessionStorage.getItem(`codecraft_user_${roomId}`) ||
+        sessionStorage.getItem('codecraft_user') ||
+        `Peer_${Math.floor(100 + Math.random() * 900)}`;
+
+    useEffect(() => {
+        sessionStorage.setItem(`codecraft_user_${roomId}`, username);
+        sessionStorage.setItem('codecraft_user', username);
+    }, [roomId, username]);
 
     // Collaborative State
     const [clients, setClients] = useState([]);
@@ -168,26 +183,36 @@ const EditorPage = () => {
 
     // Socket Initialization & Event Management
     useEffect(() => {
+        let activeSocket;
         const init = async () => {
-            socketRef.current = await initSocket();
-            socketRef.current.on('connect_error', (err) => handleError(err));
-            socketRef.current.on('connect_failed', (err) => handleError(err));
+            activeSocket = await initSocket();
+            socketRef.current = activeSocket;
+            setSocket(activeSocket);
 
-            function handleError(e) {
-                console.log('socket error', e);
-                toast.error('Socket connection failed, try again later');
-                reactNavigator('/');
-            }
+            activeSocket.on('connect_error', (err) => {
+                console.log('Socket connect_error', err);
+            });
+            activeSocket.on('connect_failed', (err) => {
+                console.log('Socket connect_failed', err);
+                toast.error('Socket connection failed, retrying...');
+            });
 
-            socketRef.current.emit(ACTIONS.JOIN, {
+            activeSocket.emit(ACTIONS.JOIN, {
                 roomId,
-                username: location.state?.username,
+                username,
             });
 
             // Listening for joined event
-            socketRef.current.on(ACTIONS.JOINED, ({ clients, username, socketId, language: currentLang, tabs: currentTabs }) => {
-                if (username !== location.state?.username) {
-                    toast.success(`${username} joined the studio.`);
+            activeSocket.on(ACTIONS.JOINED, ({ clients, username: joinedUser, socketId, language: currentLang, tabs: currentTabs }) => {
+                if (joinedUser !== username) {
+                    toast.success(`${joinedUser} joined the studio.`);
+                    // ONLY existing users send their current code and tabs to the newcomer
+                    activeSocket.emit(ACTIONS.SYNC_CODE, {
+                        code: codeRef.current,
+                        socketId,
+                        language: currentLang || language,
+                        tabs: currentTabs || tabs,
+                    });
                 }
                 setClients(clients);
                 if (currentLang) {
@@ -197,52 +222,46 @@ const EditorPage = () => {
                     setTabs(currentTabs);
                     setActiveTabId((curr) => (currentTabs.some((t) => t.id === curr) ? curr : 'code'));
                 }
-                socketRef.current.emit(ACTIONS.SYNC_CODE, {
-                    code: codeRef.current,
-                    socketId,
-                    language: currentLang || language,
-                    tabs: currentTabs || tabs,
-                });
             });
 
             // Listening for language change event
-            socketRef.current.on(ACTIONS.LANGUAGE_CHANGE, ({ language: newLang }) => {
+            activeSocket.on(ACTIONS.LANGUAGE_CHANGE, ({ language: newLang }) => {
                 setLanguage(newLang);
                 toast.success(`Language synced to ${LANGUAGE_CONFIGS[newLang]?.name || newLang}`);
             });
 
             // Real-time tab events across room peers
-            socketRef.current.on(ACTIONS.TAB_OPEN, ({ tab, username }) => {
+            activeSocket.on(ACTIONS.TAB_OPEN, ({ tab, username: opener }) => {
                 setTabs((prev) => {
                     if (prev.some((t) => t.id === tab.id)) return prev;
                     return [...prev, tab];
                 });
                 setActiveTabId(tab.id);
-                if (username && username !== location.state?.username) {
-                    toast(`${username} opened ${tab.label}`, { icon: '🎨' });
+                if (opener && opener !== username) {
+                    toast(`${opener} opened ${tab.label}`, { icon: '🎨' });
                 }
             });
 
-            socketRef.current.on(ACTIONS.TAB_CLOSE, ({ tabId, username }) => {
+            activeSocket.on(ACTIONS.TAB_CLOSE, ({ tabId, username: closer }) => {
                 setTabs((prev) => {
                     const remaining = prev.filter((t) => t.id !== tabId);
                     setActiveTabId((curr) => (curr === tabId ? remaining[remaining.length - 1]?.id || 'code' : curr));
                     return remaining;
                 });
-                if (username && username !== location.state?.username) {
-                    toast(`${username} closed a tab`, { icon: '🗑️' });
+                if (closer && closer !== username) {
+                    toast(`${closer} closed a tab`, { icon: '🗑️' });
                 }
             });
 
-            socketRef.current.on(ACTIONS.TAB_SYNC, ({ tabs: syncedTabs }) => {
+            activeSocket.on(ACTIONS.TAB_SYNC, ({ tabs: syncedTabs }) => {
                 if (syncedTabs && Array.isArray(syncedTabs) && syncedTabs.length > 0) {
                     setTabs(syncedTabs);
                 }
             });
 
             // Listening for disconnected event
-            socketRef.current.on(ACTIONS.DISCONNECTED, ({ socketId, username }) => {
-                toast(`${username} left the room`, { icon: '👋' });
+            activeSocket.on(ACTIONS.DISCONNECTED, ({ socketId, username: leftUser }) => {
+                toast(`${leftUser} left the room`, { icon: '👋' });
                 setClients((prev) => prev.filter((client) => client.socketId !== socketId));
             });
         };
@@ -250,16 +269,18 @@ const EditorPage = () => {
         init();
 
         return () => {
-            socketRef.current?.off(ACTIONS.JOINED);
-            socketRef.current?.off(ACTIONS.DISCONNECTED);
-            socketRef.current?.off(ACTIONS.LANGUAGE_CHANGE);
-            socketRef.current?.off(ACTIONS.TAB_OPEN);
-            socketRef.current?.off(ACTIONS.TAB_CLOSE);
-            socketRef.current?.off(ACTIONS.TAB_SYNC);
-            socketRef.current?.disconnect();
+            if (activeSocket) {
+                activeSocket.off(ACTIONS.JOINED);
+                activeSocket.off(ACTIONS.DISCONNECTED);
+                activeSocket.off(ACTIONS.LANGUAGE_CHANGE);
+                activeSocket.off(ACTIONS.TAB_OPEN);
+                activeSocket.off(ACTIONS.TAB_CLOSE);
+                activeSocket.off(ACTIONS.TAB_SYNC);
+                activeSocket.disconnect();
+            }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [roomId]);
 
     const handleLanguageChange = (newLang) => {
         setLanguage(newLang);
@@ -283,7 +304,10 @@ const EditorPage = () => {
         setStatus('running');
 
         try {
-            const backendUrl = process.env.REACT_APP_BACKEND_URL || '';
+            let backendUrl = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/+$/, '');
+            if (!backendUrl && typeof window !== 'undefined' && window.location.port === '3000') {
+                backendUrl = `${window.location.protocol}//${window.location.hostname}:5000`;
+            }
             const res = await fetch(`${backendUrl}/api/execute`, {
                 method: 'POST',
                 headers: {
@@ -358,7 +382,7 @@ const EditorPage = () => {
         socketRef.current?.emit(ACTIONS.TAB_OPEN, {
             roomId,
             tab: newTab,
-            username: location.state?.username,
+            username,
         });
     };
 
@@ -377,17 +401,13 @@ const EditorPage = () => {
         socketRef.current?.emit(ACTIONS.TAB_CLOSE, {
             roomId,
             tabId,
-            username: location.state?.username,
+            username,
         });
     };
 
     const switchTab = (tabId) => {
         setActiveTabId(tabId);
     };
-
-    if (!location.state) {
-        return <Navigate to='/' />;
-    }
 
     return (
         <div className="h-screen w-full flex flex-col overflow-hidden bg-white dark:bg-[#0f0f0f] text-gray-900 dark:text-gray-100 select-none">
@@ -620,6 +640,7 @@ const EditorPage = () => {
                         {/* CodeMirror Editor (visible when Code tab is active) */}
                         <div className={activeTabId === 'code' ? 'h-full' : 'hidden'}>
                             <Editor
+                                socket={socket}
                                 socketRef={socketRef}
                                 roomId={roomId}
                                 language={language}
@@ -638,6 +659,7 @@ const EditorPage = () => {
                                 <CollabCanvas
                                     key={tab.id}
                                     canvasId={tab.id}
+                                    socket={socket}
                                     socketRef={socketRef}
                                     roomId={roomId}
                                     isVisible={activeTabId === tab.id}
