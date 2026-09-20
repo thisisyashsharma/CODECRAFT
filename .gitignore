@@ -1,4 +1,4 @@
-﻿# Node / JS
+# Node / JS
 node_modules/
 build/
 dist/
@@ -15,3 +15,7 @@ yarn-debug.log*
 
 # OS files
 Thumbs.db
+
+# Documentation
+PROJECT_OVERVIEW.md
+viewtube_ui_ux_design_system_prompt.md
