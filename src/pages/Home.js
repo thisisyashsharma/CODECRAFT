@@ -53,9 +53,6 @@ const Home = () => {
                     <span className="font-bold text-lg tracking-tight">
                         Code<span className="text-blue-600 dark:text-blue-400">Craft</span>
                     </span>
-                    <span className="hidden sm:inline-block text-[11px] font-mono font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-[#1f1f1f] text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-white/10">
-                        v2.0 • ViewTube Studio
-                    </span>
                 </div>
 
                 {/* View Transition Theme Toggle Button */}
@@ -159,10 +156,10 @@ const Home = () => {
             <footer className="w-full max-w-5xl py-4 flex flex-col sm:flex-row items-center justify-between text-xs text-gray-500 dark:text-gray-500 border-t border-gray-200/60 dark:border-white/5 gap-2">
                 <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <span>ViewTube Design System Engine • High Precision Zero CLS</span>
+                    <span>Real-Time Code Collaboration Studio</span>
                 </div>
                 <div>
-                    Built with engineering craft & precision
+                    CodeCraft
                 </div>
             </footer>
         </div>

@@ -8,6 +8,7 @@ const MobileBottomNav = ({
   clientCount = 1,
   onRunCode,
   isExecuting = false,
+  onToggleTheme,
 }) => {
   const { isDark, toggleTheme } = useTheme();
 
@@ -86,7 +87,7 @@ const MobileBottomNav = ({
 
       {/* Theme Switch Pill */}
       <button
-        onClick={toggleTheme}
+        onClick={onToggleTheme || toggleTheme}
         className="flex flex-col items-center justify-center gap-1 group py-1 outline-none"
       >
         <div className="w-[48px] h-8 rounded-full flex items-center justify-center text-gray-500 dark:text-gray-400 group-hover:bg-gray-100 dark:group-hover:bg-white/5 transition-colors">

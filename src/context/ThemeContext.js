@@ -2,20 +2,21 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const ThemeContext = createContext({
   theme: 'dark',
+  setTheme: () => {},
   toggleTheme: () => {},
 });
 
 export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(() => {
     try {
-      const savedTheme = localStorage.getItem('viewtube-theme');
+      const savedTheme = localStorage.getItem('codecraft-theme');
       if (savedTheme === 'light' || savedTheme === 'dark') {
         return savedTheme;
       }
     } catch (e) {
       // Fallback
     }
-    return 'dark'; // Default ViewTube OLED dark
+    return 'dark'; // Default OLED dark
   });
 
   useEffect(() => {
@@ -26,7 +27,7 @@ export const ThemeProvider = ({ children }) => {
       root.classList.remove('dark');
     }
     try {
-      localStorage.setItem('viewtube-theme', theme);
+      localStorage.setItem('codecraft-theme', theme);
     } catch (e) {}
   }, [theme]);
 
@@ -85,7 +86,7 @@ export const ThemeProvider = ({ children }) => {
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, isDark: theme === 'dark' }}>
+    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme, isDark: theme === 'dark' }}>
       {children}
     </ThemeContext.Provider>
   );

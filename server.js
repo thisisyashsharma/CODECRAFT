@@ -208,38 +208,47 @@ const userSocketMap = {};
 const roomLanguageMap = {};
 const roomTabsMap = {};
 const roomCanvasMap = {};
+const roomThemeMap = {};
 
 function getAllConnectedClients(roomId) {
-    return Array.from(io.sockets.adapter.rooms.get(roomId) || []).map((socketId) => {
-        return {
+    return Array.from(io.sockets.adapter.rooms.get(roomId) || [])
+        .map((socketId) => ({
             socketId,
             username: userSocketMap[socketId],
-        };
-    });
+        }))
+        .filter((c) => c.username);
 }
 
 io.on('connection', (socket) => {
     console.log('socket connected', socket.id);
 
     socket.on(ACTIONS.JOIN, ({ roomId, username }) => {
-        userSocketMap[socket.id] = username;
+        const user = (username && String(username).trim()) || `Peer_${socket.id.slice(0, 4)}`;
+        userSocketMap[socket.id] = user;
         socket.join(roomId);
         const clients = getAllConnectedClients(roomId);
         const currentLanguage = roomLanguageMap[roomId] || 'javascript';
+        const currentTheme = roomThemeMap[roomId] || 'dark';
         if (!roomTabsMap[roomId]) {
             roomTabsMap[roomId] = [{ id: 'code', type: 'code', label: 'Code' }];
         }
         const currentTabs = roomTabsMap[roomId];
 
+        console.log(`[SERVER] JOIN: user="${user}" socketId=${socket.id} room="${roomId}" clientsCount=${clients.length}`);
+
         clients.forEach(({ socketId }) => {
             io.to(socketId).emit(ACTIONS.JOINED, {
                 clients,
-                username,
+                username: user,
                 socketId: socket.id,
                 language: currentLanguage,
+                theme: currentTheme,
                 tabs: currentTabs,
             });
         });
+
+        // Broadcast authoritative peer list to everyone in the room
+        io.in(roomId).emit(ACTIONS.PEERS_UPDATE, { clients });
 
         // Send existing canvas state to newly joined user
         const canvasState = roomCanvasMap[roomId] || {};
@@ -250,7 +259,7 @@ io.on('connection', (socket) => {
         socket.in(roomId).emit(ACTIONS.CODE_CHANGE, { code });
     });
 
-    socket.on(ACTIONS.SYNC_CODE, ({ socketId, code, language, tabs }) => {
+    socket.on(ACTIONS.SYNC_CODE, ({ socketId, code, language, tabs, theme }) => {
         io.to(socketId).emit(ACTIONS.CODE_CHANGE, { code });
         if (language) {
             io.to(socketId).emit(ACTIONS.LANGUAGE_CHANGE, { language });
@@ -258,11 +267,42 @@ io.on('connection', (socket) => {
         if (tabs) {
             io.to(socketId).emit(ACTIONS.TAB_SYNC, { tabs });
         }
+        if (theme) {
+            io.to(socketId).emit(ACTIONS.THEME_CHANGE, { theme });
+        }
     });
 
     socket.on(ACTIONS.LANGUAGE_CHANGE, ({ roomId, language }) => {
         roomLanguageMap[roomId] = language;
         socket.in(roomId).emit(ACTIONS.LANGUAGE_CHANGE, { language });
+    });
+
+    // Real-time room theme synchronization
+    socket.on(ACTIONS.THEME_CHANGE, ({ roomId, theme, username }) => {
+        roomThemeMap[roomId] = theme;
+        console.log(`[SERVER] THEME_CHANGE: room="${roomId}" theme="${theme}" by="${username}" socket=${socket.id}`);
+        io.in(roomId).emit(ACTIONS.THEME_CHANGE, { theme, username });
+    });
+
+    // Real-time collaborative code editor cursor movement
+    socket.on(ACTIONS.CURSOR_MOVE, ({ roomId, position, username }) => {
+        socket.in(roomId).emit(ACTIONS.CURSOR_MOVE, {
+            socketId: socket.id,
+            position,
+            username: username || userSocketMap[socket.id] || 'Peer',
+        });
+    });
+
+    // Real-time collaborative canvas cursor movement
+    socket.on(ACTIONS.CANVAS_CURSOR, ({ roomId, canvasId = 'default', x, y, isDrawing, username }) => {
+        socket.in(roomId).emit(ACTIONS.CANVAS_CURSOR, {
+            socketId: socket.id,
+            canvasId,
+            x,
+            y,
+            isDrawing,
+            username: username || userSocketMap[socket.id] || 'Peer',
+        });
     });
 
     // Real-time tab open/close events
@@ -309,17 +349,43 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnecting', () => {
-        const rooms = [...socket.rooms];
+        const rooms = [...socket.rooms].filter((r) => r !== socket.id);
         rooms.forEach((roomId) => {
             socket.in(roomId).emit(ACTIONS.DISCONNECTED, {
                 socketId: socket.id,
                 username: userSocketMap[socket.id],
             });
+            // Clear remote cursors
+            socket.in(roomId).emit(ACTIONS.CURSOR_MOVE, {
+                socketId: socket.id,
+                position: null,
+            });
+            socket.in(roomId).emit(ACTIONS.CANVAS_CURSOR, {
+                socketId: socket.id,
+                x: -1,
+                y: -1,
+            });
         });
 
         delete userSocketMap[socket.id];
-        socket.leave();
+
+        // Broadcast updated room peers after departure
+        rooms.forEach((roomId) => {
+            const remaining = getAllConnectedClients(roomId).filter((c) => c.socketId !== socket.id);
+            io.in(roomId).emit(ACTIONS.PEERS_UPDATE, { clients: remaining });
+        });
     });
+
+    socket.on('disconnect', (reason) => {
+        console.log(`[SERVER] DISCONNECT: socketId=${socket.id} reason="${reason}"`);
+    });
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 const PORT = process.env.PORT || 5000;

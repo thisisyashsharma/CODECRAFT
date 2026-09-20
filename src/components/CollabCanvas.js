@@ -7,17 +7,33 @@ const COLORS = [
     '#8be9fd', '#50fa7b', '#f1fa8c', '#ffb86c',
 ];
 
-const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisible }) => {
+const PEER_COLORS = [
+    '#ec4899', '#8b5cf6', '#3b82f6', '#10b981',
+    '#f59e0b', '#06b6d4', '#ef4444', '#14b8a6',
+];
+
+function getPeerColor(id = '') {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+        hash = (hash << 5) - hash + id.charCodeAt(i);
+        hash |= 0;
+    }
+    return PEER_COLORS[Math.abs(hash) % PEER_COLORS.length];
+}
+
+const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default', isVisible }) => {
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
     const ctxRef = useRef(null);
     const isDrawingRef = useRef(false);
     const currentStrokeRef = useRef([]);
     const strokesRef = useRef([]);
+    const cursorThrottleRef = useRef(null);
 
     const [tool, setTool] = useState('pen');
     const [color, setColor] = useState('#f8f8f2');
     const [strokeWidth, setStrokeWidth] = useState(3);
+    const [remoteCursors, setRemoteCursors] = useState({});
 
     // Replay a single stroke on canvas
     const drawStroke = useCallback((stroke) => {
@@ -119,7 +135,27 @@ const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisib
         }
     }, [isVisible, initCanvas]);
 
-    // Socket listeners for receiving remote drawing events
+    // Cleanup stale cursors older than 4s
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+            setRemoteCursors((prev) => {
+                let changed = false;
+                const next = {};
+                for (const [id, c] of Object.entries(prev)) {
+                    if (now - c.lastSeen < 4000) {
+                        next[id] = c;
+                    } else {
+                        changed = true;
+                    }
+                }
+                return changed ? next : prev;
+            });
+        }, 2000);
+        return () => clearInterval(interval);
+    }, []);
+
+    // Socket listeners for receiving remote drawing events and cursors
     useEffect(() => {
         const activeSocket = socket || socketRef?.current;
         if (!activeSocket) return;
@@ -152,14 +188,53 @@ const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisib
             }
         };
 
+        const handleRemoteCanvasCursor = ({ socketId, canvasId: incomingCanvasId, x, y, isDrawing: remoteDrawing, username: peerName }) => {
+            if (incomingCanvasId && incomingCanvasId !== canvasId) return;
+            const myId = activeSocket?.id || socketRef?.current?.id;
+            if (socketId === myId) return;
+
+            if (x < 0 || y < 0) {
+                setRemoteCursors((prev) => {
+                    const next = { ...prev };
+                    delete next[socketId];
+                    return next;
+                });
+                return;
+            }
+
+            setRemoteCursors((prev) => ({
+                ...prev,
+                [socketId]: {
+                    x,
+                    y,
+                    isDrawing: remoteDrawing,
+                    username: peerName || 'Peer',
+                    color: getPeerColor(peerName || socketId),
+                    lastSeen: Date.now(),
+                },
+            }));
+        };
+
+        const handlePeerDisconnect = ({ socketId }) => {
+            setRemoteCursors((prev) => {
+                const next = { ...prev };
+                delete next[socketId];
+                return next;
+            });
+        };
+
         activeSocket.on(ACTIONS.CANVAS_DRAW, handleRemoteDraw);
         activeSocket.on(ACTIONS.CANVAS_CLEAR, handleRemoteClear);
         activeSocket.on(ACTIONS.CANVAS_SYNC, handleCanvasSync);
+        activeSocket.on(ACTIONS.CANVAS_CURSOR, handleRemoteCanvasCursor);
+        activeSocket.on(ACTIONS.DISCONNECTED, handlePeerDisconnect);
 
         return () => {
             activeSocket.off(ACTIONS.CANVAS_DRAW, handleRemoteDraw);
             activeSocket.off(ACTIONS.CANVAS_CLEAR, handleRemoteClear);
             activeSocket.off(ACTIONS.CANVAS_SYNC, handleCanvasSync);
+            activeSocket.off(ACTIONS.CANVAS_CURSOR, handleRemoteCanvasCursor);
+            activeSocket.off(ACTIONS.DISCONNECTED, handlePeerDisconnect);
         };
     }, [socket, socketRef, canvasId, drawStroke, replayAllStrokes]);
 
@@ -190,12 +265,40 @@ const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisib
         ctx.lineWidth = tool === 'eraser' ? strokeWidth * 3 : strokeWidth;
         ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
         ctx.moveTo(pos.x * rect.width, pos.y * rect.height);
+
+        // Broadcast cursor drawing state
+        const activeSocket = socket || socketRef?.current;
+        activeSocket?.emit(ACTIONS.CANVAS_CURSOR, {
+            roomId,
+            canvasId,
+            x: pos.x,
+            y: pos.y,
+            isDrawing: true,
+            username,
+        });
     };
 
     const handlePointerMove = (e) => {
+        const pos = getPointerPos(e);
+
+        // Broadcast cursor movement (throttled at 40ms)
+        if (cursorThrottleRef.current === null) {
+            cursorThrottleRef.current = setTimeout(() => {
+                cursorThrottleRef.current = null;
+                const activeSocket = socket || socketRef?.current;
+                activeSocket?.emit(ACTIONS.CANVAS_CURSOR, {
+                    roomId,
+                    canvasId,
+                    x: pos.x,
+                    y: pos.y,
+                    isDrawing: isDrawingRef.current,
+                    username,
+                });
+            }, 40);
+        }
+
         if (!isDrawingRef.current) return;
         e.preventDefault();
-        const pos = getPointerPos(e);
         currentStrokeRef.current.push(pos);
 
         const ctx = ctxRef.current;
@@ -236,6 +339,19 @@ const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisib
             });
         }
         currentStrokeRef.current = [];
+    };
+
+    const handlePointerLeave = () => {
+        handlePointerUp();
+        const activeSocket = socket || socketRef?.current;
+        activeSocket?.emit(ACTIONS.CANVAS_CURSOR, {
+            roomId,
+            canvasId,
+            x: -1,
+            y: -1,
+            isDrawing: false,
+            username,
+        });
     };
 
     const handleClearCanvas = () => {
@@ -371,10 +487,11 @@ const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisib
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
                     onPointerUp={handlePointerUp}
-                    onPointerLeave={handlePointerUp}
+                    onPointerLeave={handlePointerLeave}
                     className="absolute inset-0 touch-none"
                     style={{ touchAction: 'none' }}
                 />
+
                 {/* Grid pattern overlay for visual reference */}
                 <div
                     className="absolute inset-0 pointer-events-none opacity-[0.03]"
@@ -384,6 +501,43 @@ const CollabCanvas = ({ socket, socketRef, roomId, canvasId = 'default', isVisib
                         backgroundSize: '40px 40px',
                     }}
                 />
+
+                {/* Remote Peer Cursors Overlay */}
+                {Object.entries(remoteCursors).map(([id, cur]) => (
+                    <div
+                        key={id}
+                        className="pointer-events-none transition-all duration-75 ease-out select-none"
+                        style={{
+                            position: 'absolute',
+                            left: `${cur.x * 100}%`,
+                            top: `${cur.y * 100}%`,
+                            transform: 'translate(-2px, -2px)',
+                            zIndex: 40,
+                        }}
+                    >
+                        {/* Custom SVG Stylus / Pointer Icon */}
+                        <svg
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill={cur.color}
+                            style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.7))' }}
+                        >
+                            <path d="M3 3l7 18 3-7 7-3L3 3z" />
+                        </svg>
+
+                        {/* Floating Name Badge with Drawing Beacon */}
+                        <div
+                            style={{ backgroundColor: cur.color }}
+                            className="text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg whitespace-nowrap -mt-1 ml-3.5 flex items-center gap-1.5 border border-white/20"
+                        >
+                            <span>{cur.username}</span>
+                            {cur.isDrawing && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                            )}
+                        </div>
+                    </div>
+                ))}
             </div>
         </div>
     );

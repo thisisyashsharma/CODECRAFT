@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-export const initSocket = async () => {
+export const initSocket = () => {
     let backendUrl = process.env.REACT_APP_BACKEND_URL;
     if (backendUrl) {
         backendUrl = backendUrl.replace(/\/+$/, '');

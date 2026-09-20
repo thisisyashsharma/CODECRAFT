@@ -36,37 +36,37 @@ const LANGUAGE_CONFIGS = {
         name: 'JavaScript (Node.js)',
         icon: '🟨',
         badge: 'JS',
-        defaultCode: `// JavaScript Playground\nfunction solve() {\n    console.log("Hello from ViewTube CodeCraft!");\n}\n\nsolve();\n`,
+        defaultCode: `// JavaScript Playground\nfunction solve() {\n    console.log("Hello from CodeCraft!");\n}\n\nsolve();\n`,
     },
     python: {
         name: 'Python 3',
         icon: '🐍',
         badge: 'PY',
-        defaultCode: `# Python 3 Playground\ndef main():\n    print("Hello from ViewTube CodeCraft Python!")\n\nif __name__ == "__main__":\n    main()\n`,
+        defaultCode: `# Python 3 Playground\ndef main():\n    print("Hello from CodeCraft Python!")\n\nif __name__ == "__main__":\n    main()\n`,
     },
     cpp: {
         name: 'C++ (GCC 13)',
         icon: '⚡',
         badge: 'C++',
-        defaultCode: `// C++ 20 Playground\n#include <iostream>\n\nint main() {\n    std::cout << "Hello from ViewTube CodeCraft C++!" << std::endl;\n    return 0;\n}\n`,
+        defaultCode: `// C++ 20 Playground\n#include <iostream>\n\nint main() {\n    std::cout << "Hello from CodeCraft C++!" << std::endl;\n    return 0;\n}\n`,
     },
     java: {
         name: 'Java (OpenJDK 21)',
         icon: '☕',
         badge: 'JAVA',
-        defaultCode: `// Java Playground\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello from ViewTube CodeCraft Java!");\n    }\n}\n`,
+        defaultCode: `// Java Playground\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello from CodeCraft Java!");\n    }\n}\n`,
     },
     rust: {
         name: 'Rust (1.82)',
         icon: '🦀',
         badge: 'RS',
-        defaultCode: `// Rust Playground\nfn main() {\n    println!("Hello from ViewTube CodeCraft Rust!");\n}\n`,
+        defaultCode: `// Rust Playground\nfn main() {\n    println!("Hello from CodeCraft Rust!");\n}\n`,
     },
     go: {
         name: 'Go (1.23)',
         icon: '🐹',
         badge: 'GO',
-        defaultCode: `// Go Playground\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello from ViewTube CodeCraft Go!")\n}\n`,
+        defaultCode: `// Go Playground\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello from CodeCraft Go!")\n}\n`,
     },
 };
 
@@ -76,7 +76,7 @@ const EditorPage = () => {
     const location = useLocation();
     const { roomId } = useParams();
     const reactNavigator = useNavigate();
-    const { isDark, toggleTheme } = useTheme();
+    const { isDark, toggleTheme, setTheme } = useTheme();
 
     // Socket instance state (ensures child components re-render and attach listeners reliably)
     const [socket, setSocket] = useState(null);
@@ -85,17 +85,20 @@ const EditorPage = () => {
     const username =
         location.state?.username ||
         sessionStorage.getItem(`codecraft_user_${roomId}`) ||
-        sessionStorage.getItem('codecraft_user') ||
         `Peer_${Math.floor(100 + Math.random() * 900)}`;
 
     useEffect(() => {
         sessionStorage.setItem(`codecraft_user_${roomId}`, username);
-        sessionStorage.setItem('codecraft_user', username);
     }, [roomId, username]);
 
     // Collaborative State
     const [clients, setClients] = useState([]);
     const [language, setLanguage] = useState('javascript');
+    const languageRef = useRef('javascript');
+
+    useEffect(() => {
+        languageRef.current = language;
+    }, [language]);
     const [isExecuting, setIsExecuting] = useState(false);
     const [output, setOutput] = useState('');
     const [errorOutput, setErrorOutput] = useState('');
@@ -183,101 +186,142 @@ const EditorPage = () => {
 
     // Socket Initialization & Event Management
     useEffect(() => {
-        let activeSocket;
-        const init = async () => {
-            activeSocket = await initSocket();
-            socketRef.current = activeSocket;
-            setSocket(activeSocket);
+        let isCancelled = false;
+        const activeSocket = initSocket();
+        socketRef.current = activeSocket;
+        setSocket(activeSocket);
 
-            activeSocket.on('connect_error', (err) => {
-                console.log('Socket connect_error', err);
-            });
-            activeSocket.on('connect_failed', (err) => {
-                console.log('Socket connect_failed', err);
-                toast.error('Socket connection failed, retrying...');
-            });
+        activeSocket.on('connect_error', (err) => {
+            console.log('Socket connect_error', err);
+        });
+        activeSocket.on('connect_failed', (err) => {
+            console.log('Socket connect_failed', err);
+            toast.error('Socket connection failed, retrying...');
+        });
 
+        const emitJoin = () => {
+            if (isCancelled) return;
+            console.log('[CLIENT] Emitting JOIN for user:', username, 'in room:', roomId, 'socket:', activeSocket.id);
             activeSocket.emit(ACTIONS.JOIN, {
                 roomId,
                 username,
             });
-
-            // Listening for joined event
-            activeSocket.on(ACTIONS.JOINED, ({ clients, username: joinedUser, socketId, language: currentLang, tabs: currentTabs }) => {
-                if (joinedUser !== username) {
-                    toast.success(`${joinedUser} joined the studio.`);
-                    // ONLY existing users send their current code and tabs to the newcomer
-                    activeSocket.emit(ACTIONS.SYNC_CODE, {
-                        code: codeRef.current,
-                        socketId,
-                        language: currentLang || language,
-                        tabs: currentTabs || tabs,
-                    });
-                }
-                setClients(clients);
-                if (currentLang) {
-                    setLanguage(currentLang);
-                }
-                if (currentTabs && Array.isArray(currentTabs) && currentTabs.length > 0) {
-                    setTabs(currentTabs);
-                    setActiveTabId((curr) => (currentTabs.some((t) => t.id === curr) ? curr : 'code'));
-                }
-            });
-
-            // Listening for language change event
-            activeSocket.on(ACTIONS.LANGUAGE_CHANGE, ({ language: newLang }) => {
-                setLanguage(newLang);
-                toast.success(`Language synced to ${LANGUAGE_CONFIGS[newLang]?.name || newLang}`);
-            });
-
-            // Real-time tab events across room peers
-            activeSocket.on(ACTIONS.TAB_OPEN, ({ tab, username: opener }) => {
-                setTabs((prev) => {
-                    if (prev.some((t) => t.id === tab.id)) return prev;
-                    return [...prev, tab];
-                });
-                setActiveTabId(tab.id);
-                if (opener && opener !== username) {
-                    toast(`${opener} opened ${tab.label}`, { icon: '🎨' });
-                }
-            });
-
-            activeSocket.on(ACTIONS.TAB_CLOSE, ({ tabId, username: closer }) => {
-                setTabs((prev) => {
-                    const remaining = prev.filter((t) => t.id !== tabId);
-                    setActiveTabId((curr) => (curr === tabId ? remaining[remaining.length - 1]?.id || 'code' : curr));
-                    return remaining;
-                });
-                if (closer && closer !== username) {
-                    toast(`${closer} closed a tab`, { icon: '🗑️' });
-                }
-            });
-
-            activeSocket.on(ACTIONS.TAB_SYNC, ({ tabs: syncedTabs }) => {
-                if (syncedTabs && Array.isArray(syncedTabs) && syncedTabs.length > 0) {
-                    setTabs(syncedTabs);
-                }
-            });
-
-            // Listening for disconnected event
-            activeSocket.on(ACTIONS.DISCONNECTED, ({ socketId, username: leftUser }) => {
-                toast(`${leftUser} left the room`, { icon: '👋' });
-                setClients((prev) => prev.filter((client) => client.socketId !== socketId));
-            });
         };
 
-        init();
+        // Emit immediately (Socket.io buffers while connecting)
+        emitJoin();
+        // Also re-emit whenever connected/reconnected
+        activeSocket.on('connect', emitJoin);
+
+        // Listening for joined event
+        activeSocket.on(ACTIONS.JOINED, ({ clients, username: joinedUser, socketId, language: currentLang, theme: currentTheme, tabs: currentTabs }) => {
+            if (isCancelled) return;
+            console.log('[CLIENT] Received JOINED:', { joinedUser, currentTheme, count: clients?.length });
+            if (joinedUser !== username) {
+                toast.success(`${joinedUser} joined the studio.`);
+                // ONLY existing users send their current code and tabs to the newcomer
+                activeSocket.emit(ACTIONS.SYNC_CODE, {
+                    code: codeRef.current,
+                    socketId,
+                    language: currentLang || language,
+                    theme: currentTheme || (isDark ? 'dark' : 'light'),
+                    tabs: currentTabs || tabs,
+                });
+            }
+            setClients(clients);
+            if (currentLang) {
+                setLanguage(currentLang);
+            }
+            if (currentTheme && typeof setTheme === 'function') {
+                setTheme(currentTheme);
+            }
+            if (currentTabs && Array.isArray(currentTabs) && currentTabs.length > 0) {
+                setTabs(currentTabs);
+                setActiveTabId((curr) => (currentTabs.some((t) => t.id === curr) ? curr : 'code'));
+            }
+        });
+
+        // Authoritative peer list updates
+        activeSocket.on(ACTIONS.PEERS_UPDATE, ({ clients: peerList }) => {
+            if (isCancelled) return;
+            if (peerList && Array.isArray(peerList)) {
+                setClients(peerList);
+            }
+        });
+
+        // Listening for language change event
+        activeSocket.on(ACTIONS.LANGUAGE_CHANGE, ({ language: newLang }) => {
+            if (isCancelled) return;
+            if (newLang && newLang !== languageRef.current) {
+                setLanguage(newLang);
+                toast.success(`Language synced to ${LANGUAGE_CONFIGS[newLang]?.name || newLang}`);
+            }
+        });
+
+        // Real-time room theme synchronization
+        activeSocket.on(ACTIONS.THEME_CHANGE, ({ theme: newTheme, username: switcher }) => {
+            if (isCancelled) return;
+            console.log('[CLIENT] Received THEME_CHANGE:', { newTheme, switcher });
+            if (newTheme && typeof setTheme === 'function') {
+                setTheme(newTheme);
+                if (switcher && switcher !== username) {
+                    toast(`${switcher} switched to ${newTheme === 'dark' ? 'Dark 🌙' : 'Light ☀️'} mode`);
+                }
+            }
+        });
+
+        // Real-time tab events across room peers
+        activeSocket.on(ACTIONS.TAB_OPEN, ({ tab, username: opener }) => {
+            if (isCancelled) return;
+            setTabs((prev) => {
+                if (prev.some((t) => t.id === tab.id)) return prev;
+                return [...prev, tab];
+            });
+            setActiveTabId(tab.id);
+            if (opener && opener !== username) {
+                toast(`${opener} opened ${tab.label}`, { icon: '🎨' });
+            }
+        });
+
+        activeSocket.on(ACTIONS.TAB_CLOSE, ({ tabId, username: closer }) => {
+            if (isCancelled) return;
+            setTabs((prev) => {
+                const remaining = prev.filter((t) => t.id !== tabId);
+                setActiveTabId((curr) => (curr === tabId ? remaining[remaining.length - 1]?.id || 'code' : curr));
+                return remaining;
+            });
+            if (closer && closer !== username) {
+                toast(`${closer} closed a tab`, { icon: '🗑️' });
+            }
+        });
+
+        activeSocket.on(ACTIONS.TAB_SYNC, ({ tabs: syncedTabs }) => {
+            if (isCancelled) return;
+            if (syncedTabs && Array.isArray(syncedTabs) && syncedTabs.length > 0) {
+                setTabs(syncedTabs);
+            }
+        });
+
+        // Listening for disconnected event
+        activeSocket.on(ACTIONS.DISCONNECTED, ({ socketId, username: leftUser }) => {
+            if (isCancelled) return;
+            toast(`${leftUser} left the room`, { icon: '👋' });
+            setClients((prev) => prev.filter((client) => client.socketId !== socketId));
+        });
 
         return () => {
-            if (activeSocket) {
-                activeSocket.off(ACTIONS.JOINED);
-                activeSocket.off(ACTIONS.DISCONNECTED);
-                activeSocket.off(ACTIONS.LANGUAGE_CHANGE);
-                activeSocket.off(ACTIONS.TAB_OPEN);
-                activeSocket.off(ACTIONS.TAB_CLOSE);
-                activeSocket.off(ACTIONS.TAB_SYNC);
-                activeSocket.disconnect();
-            }
+            isCancelled = true;
+            activeSocket.off('connect', emitJoin);
+            activeSocket.off(ACTIONS.JOINED);
+            activeSocket.off(ACTIONS.PEERS_UPDATE);
+            activeSocket.off(ACTIONS.DISCONNECTED);
+            activeSocket.off(ACTIONS.LANGUAGE_CHANGE);
+            activeSocket.off(ACTIONS.THEME_CHANGE);
+            activeSocket.off(ACTIONS.TAB_OPEN);
+            activeSocket.off(ACTIONS.TAB_CLOSE);
+            activeSocket.off(ACTIONS.TAB_SYNC);
+            activeSocket.disconnect();
+            socketRef.current = null;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [roomId]);
@@ -409,9 +453,21 @@ const EditorPage = () => {
         setActiveTabId(tabId);
     };
 
+    const handleThemeToggle = (e) => {
+        const nextTheme = isDark ? 'light' : 'dark';
+        toggleTheme(e);
+        const activeSocket = socketRef.current || socket;
+        console.log('[CLIENT] handleThemeToggle emitting THEME_CHANGE:', { roomId, theme: nextTheme, username, connected: activeSocket?.connected, socketId: activeSocket?.id });
+        activeSocket?.emit(ACTIONS.THEME_CHANGE, {
+            roomId,
+            theme: nextTheme,
+            username,
+        });
+    };
+
     return (
         <div className="h-screen w-full flex flex-col overflow-hidden bg-white dark:bg-[#0f0f0f] text-gray-900 dark:text-gray-100 select-none">
-            {/* 1. TOP STICKY HEADER (64px ViewTube Titanium Header) */}
+            {/* 1. TOP STICKY HEADER (64px) */}
             <header className="h-14 sm:h-16 shrink-0 px-3 sm:px-5 flex items-center justify-between bg-white dark:bg-[#0f0f0f] border-b border-gray-200/80 dark:border-white/10 z-30 transition-colors">
                 {/* Left: Brand & Room Pill */}
                 <div className="flex items-center gap-2 sm:gap-4 min-w-0">
@@ -520,7 +576,7 @@ const EditorPage = () => {
 
                     {/* View Transitions Circular Wave Theme Toggle */}
                     <button
-                        onClick={(e) => toggleTheme(e)}
+                        onClick={handleThemeToggle}
                         className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-gray-100 dark:bg-[#1f1f1f] text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-white/10 hover:border-blue-500/40 dark:hover:border-white/20 transition-all duration-300 shadow-sm active:translate-y-[0.5px]"
                         title={`Switch to ${isDark ? 'Light' : 'Dark'} mode`}
                     >
@@ -574,7 +630,7 @@ const EditorPage = () => {
                                     <Client
                                         key={client.socketId}
                                         username={client.username}
-                                        isSelf={client.username === location.state?.username}
+                                        isSelf={client.socketId === (socket?.id || socketRef.current?.id) || client.username === username}
                                     />
                                 ))}
                             </div>
@@ -643,6 +699,7 @@ const EditorPage = () => {
                                 socket={socket}
                                 socketRef={socketRef}
                                 roomId={roomId}
+                                username={username}
                                 language={language}
                                 initialCode={LANGUAGE_CONFIGS[language]?.defaultCode}
                                 onCodeChange={(code) => {
@@ -662,6 +719,7 @@ const EditorPage = () => {
                                     socket={socket}
                                     socketRef={socketRef}
                                     roomId={roomId}
+                                    username={username}
                                     isVisible={activeTabId === tab.id}
                                 />
                             ))}
@@ -809,7 +867,7 @@ const EditorPage = () => {
                                 <Client
                                     key={client.socketId}
                                     username={client.username}
-                                    isSelf={client.username === location.state?.username}
+                                    isSelf={client.socketId === (socket?.id || socketRef.current?.id) || client.username === username}
                                 />
                             ))}
                         </div>
@@ -839,7 +897,7 @@ const EditorPage = () => {
                 </div>
             )}
 
-            {/* 4. MOBILE BOTTOM NAVIGATION (Section 4.1 ViewTube Spec) */}
+            {/* 4. MOBILE BOTTOM NAVIGATION */}
             <MobileBottomNav
                 activeTab={mobileActiveView}
                 onTabChange={(tab) => {
@@ -856,6 +914,7 @@ const EditorPage = () => {
                 clientCount={clients.length}
                 onRunCode={handleRunCode}
                 isExecuting={isExecuting}
+                onToggleTheme={handleThemeToggle}
             />
         </div>
     );

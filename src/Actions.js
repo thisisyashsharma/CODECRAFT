@@ -10,6 +10,11 @@ const ACTIONS = {
     CANVAS_SYNC: 'canvas-sync',
     TAB_OPEN: 'tab-open',
     TAB_CLOSE: 'tab-close',
+    TAB_SYNC: 'tab-sync',
+    THEME_CHANGE: 'theme-change',
+    CURSOR_MOVE: 'cursor-move',
+    CANVAS_CURSOR: 'canvas-cursor',
+    PEERS_UPDATE: 'peers-update',
     LEAVE: 'leave',
 };
 
