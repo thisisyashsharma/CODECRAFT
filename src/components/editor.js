@@ -37,7 +37,7 @@ const getPeerColor = (identifier = '') => {
     return PEER_COLORS[idx];
 };
 
-const Editor = ({ socket, socketRef, roomId, username, language = 'javascript', initialCode = '', onCodeChange, onRunCode }) => {
+const Editor = ({ socket, socketRef, roomId, username, language = 'javascript', initialCode = '', onCodeChange, onRunCode, isVisible = true }) => {
     const editorRef = useRef(null);
     const textareaRef = useRef(null);
     const runCodeRef = useRef(onRunCode);
@@ -58,13 +58,15 @@ const Editor = ({ socket, socketRef, roomId, username, language = 'javascript', 
         if (!textareaRef.current) return;
 
         const currentMode = LANGUAGE_MODES[language] || 'javascript';
+        const isMobileDevice = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         editorRef.current = Codemirror.fromTextArea(textareaRef.current, {
             mode: currentMode,
             theme: isDark ? 'dracula' : 'default',
             autoCloseTags: true,
             autoCloseBrackets: true,
             lineNumbers: true,
-            lineWrapping: false,
+            lineWrapping: true,
+            inputStyle: isMobileDevice ? 'contenteditable' : 'textarea',
             styleActiveLine: true,
             extraKeys: {
                 'Ctrl-Enter': () => {
@@ -137,6 +139,15 @@ const Editor = ({ socket, socketRef, roomId, username, language = 'javascript', 
         }
     }, [isDark]);
 
+    // Refresh layout when Code tab becomes visible again
+    useEffect(() => {
+        if (isVisible && editorRef.current) {
+            setTimeout(() => {
+                if (editorRef.current) editorRef.current.refresh();
+            }, 30);
+        }
+    }, [isVisible]);
+
     // Dynamically update syntax highlighting mode when language prop changes
     useEffect(() => {
         if (editorRef.current && language) {
@@ -190,6 +201,7 @@ const Editor = ({ socket, socketRef, roomId, username, language = 'javascript', 
             cursorEl.style.marginRight = '-1px';
             cursorEl.style.display = 'inline-block';
             cursorEl.style.position = 'relative';
+            cursorEl.style.pointerEvents = 'none';
 
             // Create floating name tag
             const tagEl = document.createElement('span');
@@ -207,6 +219,7 @@ const Editor = ({ socket, socketRef, roomId, username, language = 'javascript', 
             tagEl.style.whiteSpace = 'nowrap';
             tagEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
             tagEl.style.zIndex = '10';
+            tagEl.style.pointerEvents = 'none';
 
             cursorEl.appendChild(tagEl);
 

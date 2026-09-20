@@ -238,21 +238,37 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
         };
     }, [socket, socketRef, canvasId, drawStroke, replayAllStrokes]);
 
-    // Convert pointer event to normalized coordinates (0-1 ratios)
-    const getPointerPos = (e) => {
+    // Safely extract client coordinates across Pointer, Mouse, and Touch events
+    const getCoords = (e) => {
+        if (e.touches && e.touches.length > 0) {
+            return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+        }
+        if (e.changedTouches && e.changedTouches.length > 0) {
+            return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
+        }
+        return { clientX: e.clientX, clientY: e.clientY };
+    };
+
+    // Convert event to normalized coordinates (0-1 ratios)
+    const getNormalizedPos = (e) => {
         const canvas = canvasRef.current;
         if (!canvas) return { x: 0, y: 0 };
         const rect = canvas.getBoundingClientRect();
+        const { clientX, clientY } = getCoords(e);
+        if (typeof clientX !== 'number' || isNaN(clientX) || typeof clientY !== 'number' || isNaN(clientY)) {
+            return { x: 0, y: 0 };
+        }
+        const w = rect.width || 1;
+        const h = rect.height || 1;
         return {
-            x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
-            y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+            x: Math.max(0, Math.min(1, (clientX - rect.left) / w)),
+            y: Math.max(0, Math.min(1, (clientY - rect.top) / h)),
         };
     };
 
-    const handlePointerDown = (e) => {
-        e.preventDefault();
+    const startDrawing = (e) => {
         isDrawingRef.current = true;
-        const pos = getPointerPos(e);
+        const pos = getNormalizedPos(e);
         currentStrokeRef.current = [pos];
 
         const ctx = ctxRef.current;
@@ -278,8 +294,8 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
         });
     };
 
-    const handlePointerMove = (e) => {
-        const pos = getPointerPos(e);
+    const continueDrawing = (e) => {
+        const pos = getNormalizedPos(e);
 
         // Broadcast cursor movement (throttled at 40ms)
         if (cursorThrottleRef.current === null) {
@@ -298,7 +314,6 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
         }
 
         if (!isDrawingRef.current) return;
-        e.preventDefault();
         currentStrokeRef.current.push(pos);
 
         const ctx = ctxRef.current;
@@ -310,7 +325,7 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
         ctx.stroke();
     };
 
-    const handlePointerUp = () => {
+    const finishDrawing = () => {
         if (!isDrawingRef.current) return;
         isDrawingRef.current = false;
 
@@ -339,10 +354,8 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
             });
         }
         currentStrokeRef.current = [];
-    };
 
-    const handlePointerLeave = () => {
-        handlePointerUp();
+        // Clear cursor drawing state
         const activeSocket = socket || socketRef?.current;
         activeSocket?.emit(ACTIONS.CANVAS_CURSOR, {
             roomId,
@@ -352,6 +365,42 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
             isDrawing: false,
             username,
         });
+    };
+
+    const handlePointerDown = (e) => {
+        if (e.target && e.target.setPointerCapture && e.pointerId !== undefined) {
+            try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
+        }
+        startDrawing(e);
+    };
+
+    const handlePointerMove = (e) => {
+        continueDrawing(e);
+    };
+
+    const handlePointerUp = (e) => {
+        if (e && e.target && e.target.releasePointerCapture && e.pointerId !== undefined) {
+            try { e.target.releasePointerCapture(e.pointerId); } catch (err) {}
+        }
+        finishDrawing();
+    };
+
+    const handleTouchStart = (e) => {
+        if (e.cancelable) e.preventDefault();
+        if (typeof window !== 'undefined' && window.PointerEvent) return;
+        startDrawing(e);
+    };
+
+    const handleTouchMove = (e) => {
+        if (e.cancelable) e.preventDefault();
+        if (typeof window !== 'undefined' && window.PointerEvent) return;
+        continueDrawing(e);
+    };
+
+    const handleTouchEnd = (e) => {
+        if (e.cancelable) e.preventDefault();
+        if (typeof window !== 'undefined' && window.PointerEvent) return;
+        finishDrawing();
     };
 
     const handleClearCanvas = () => {
@@ -381,7 +430,7 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
             className={`flex flex-col h-full w-full ${isVisible ? '' : 'hidden'}`}
         >
             {/* Canvas Toolbar */}
-            <div className="h-11 shrink-0 px-3 flex items-center justify-between bg-white/60 dark:bg-[#121212]/60 backdrop-blur-md border-b border-gray-200/80 dark:border-white/5">
+            <div className="h-11 shrink-0 px-3 flex items-center justify-between bg-white/60 dark:bg-[#121212]/60 backdrop-blur-md border-b border-gray-200/80 dark:border-white/5 overflow-x-auto scrollbar-none">
                 {/* Left: Drawing Tools */}
                 <div className="flex items-center gap-1.5">
                     {/* Pen Tool */}
@@ -487,8 +536,13 @@ const CollabCanvas = ({ socket, socketRef, roomId, username, canvasId = 'default
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
                     onPointerUp={handlePointerUp}
-                    onPointerLeave={handlePointerLeave}
-                    className="absolute inset-0 touch-none"
+                    onPointerLeave={handlePointerUp}
+                    onPointerCancel={handlePointerUp}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
+                    onTouchCancel={handleTouchEnd}
+                    className="absolute inset-0 touch-none select-none"
                     style={{ touchAction: 'none' }}
                 />
 

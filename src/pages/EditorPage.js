@@ -113,7 +113,6 @@ const EditorPage = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
     const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
-    const [mobileActiveView, setMobileActiveView] = useState('editor'); // 'editor' | 'terminal' | 'collaborators'
 
     // Celebration Micro-Interaction State
     const [showCopyCelebration, setShowCopyCelebration] = useState(false);
@@ -466,11 +465,11 @@ const EditorPage = () => {
     };
 
     return (
-        <div className="h-screen w-full flex flex-col overflow-hidden bg-white dark:bg-[#0f0f0f] text-gray-900 dark:text-gray-100 select-none">
+        <div className="h-screen w-full flex flex-col overflow-hidden bg-white dark:bg-[#0f0f0f] text-gray-900 dark:text-gray-100">
             {/* 1. TOP STICKY HEADER (64px) */}
-            <header className="h-14 sm:h-16 shrink-0 px-3 sm:px-5 flex items-center justify-between bg-white dark:bg-[#0f0f0f] border-b border-gray-200/80 dark:border-white/10 z-30 transition-colors">
-                {/* Left: Brand & Room Pill */}
-                <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            <header className="h-14 sm:h-16 shrink-0 px-2 sm:px-5 flex items-center justify-between bg-white dark:bg-[#0f0f0f] border-b border-gray-200/80 dark:border-white/10 z-30 transition-colors">
+                {/* Left: Brand, Room Pill & Mobile Live Peers */}
+                <div className="flex items-center gap-1.5 sm:gap-4 min-w-0">
                     <button
                         onClick={leaveRoom}
                         className="flex items-center gap-2 group outline-none shrink-0"
@@ -488,12 +487,12 @@ const EditorPage = () => {
                     <div className="relative">
                         <button
                             onClick={copyRoomId}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-[#1f1f1f] hover:bg-gray-200 dark:hover:bg-[#282828] border border-gray-200 dark:border-white/10 text-xs font-mono transition-colors text-gray-700 dark:text-gray-300"
+                            className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full bg-gray-100 dark:bg-[#1f1f1f] hover:bg-gray-200 dark:hover:bg-[#282828] border border-gray-200 dark:border-white/10 text-xs font-mono transition-colors text-gray-700 dark:text-gray-300"
                             title="Click to copy Room ID"
                         >
-                            <span className="text-[10px] text-gray-400 font-sans uppercase font-semibold">Room:</span>
-                            <span className="max-w-[80px] sm:max-w-[130px] truncate font-medium">{roomId}</span>
-                            <Copy size={12} className="text-gray-400 shrink-0" />
+                            <span className="hidden sm:inline text-[10px] text-gray-400 font-sans uppercase font-semibold">Room:</span>
+                            <span className="max-w-[65px] xs:max-w-[90px] sm:max-w-[130px] truncate font-medium">{roomId}</span>
+                            <Copy size={11} className="text-gray-400 shrink-0" />
                         </button>
                         {showCopyCelebration && (
                             <CelebrationParticles
@@ -503,10 +502,24 @@ const EditorPage = () => {
                             />
                         )}
                     </div>
+
+                    {/* Live Mobile Peer Counter Pill */}
+                    <button
+                        onClick={() => setMobileDrawerOpen(true)}
+                        className="sm:hidden flex items-center gap-1.5 px-2 py-1 rounded-full bg-blue-50 dark:bg-blue-900/25 border border-blue-200 dark:border-blue-500/30 text-blue-600 dark:text-blue-400 text-xs font-medium shrink-0 active:scale-95 transition-transform"
+                        title="View Studio Peers"
+                    >
+                        <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                        <Users size={12} />
+                        <RollingCounter value={clients.length} />
+                    </button>
                 </div>
 
-                {/* Center: Morphing Quick Action Bar */}
-                <div className="flex items-center gap-2">
+                {/* Center: Morphing Quick Action Bar & Language Selector */}
+                <div className="flex items-center gap-1.5 sm:gap-2">
                     <QuickActionBar
                         languages={LANGUAGE_CONFIGS}
                         currentLanguage={language}
@@ -517,12 +530,12 @@ const EditorPage = () => {
                         onLeaveRoom={leaveRoom}
                     />
 
-                    {/* Desktop Language Selector Pill */}
-                    <div className="hidden sm:flex items-center">
+                    {/* Language Selector Pill */}
+                    <div className="flex items-center">
                         <select
                             value={language}
                             onChange={(e) => handleLanguageChange(e.target.value)}
-                            className="h-9 px-3 rounded-full bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-white/10 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/40 cursor-pointer transition-colors"
+                            className="h-8 sm:h-9 px-1.5 sm:px-3 rounded-full bg-gray-100 dark:bg-[#1f1f1f] text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-white/10 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/40 cursor-pointer transition-colors max-w-[85px] xs:max-w-none"
                         >
                             {Object.entries(LANGUAGE_CONFIGS).map(([key, config]) => (
                                 <option key={key} value={key} className="bg-white dark:bg-[#141414]">
@@ -533,32 +546,34 @@ const EditorPage = () => {
                     </div>
                 </div>
 
-                {/* Right: Primary Run Button & Actions */}
-                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                    {/* Run Code Laser Pill Button */}
-                    <LaserPillButton
-                        onClick={handleRunCode}
-                        disabled={isExecuting}
-                        variant="primary"
-                        size="md"
-                        className="font-semibold tracking-wide shadow-md shadow-blue-600/20"
-                        title="Execute Code (Ctrl+Enter)"
-                    >
-                        {isExecuting ? (
-                            <>
-                                <Loader2 size={15} className="animate-spin" />
-                                <span className="hidden xs:inline text-xs">Running...</span>
-                            </>
-                        ) : (
-                            <>
-                                <Play size={14} fill="currentColor" />
-                                <span className="text-xs">Run Code</span>
-                                <span className="hidden lg:inline-block text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/20 text-white/90">
-                                    Ctrl+Enter
-                                </span>
-                            </>
-                        )}
-                    </LaserPillButton>
+                {/* Right: Primary Run Button & Theme Toggle */}
+                <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+                    {/* Run Code Laser Pill Button (Desktop & Tablet) */}
+                    <div className="hidden xs:flex">
+                        <LaserPillButton
+                            onClick={handleRunCode}
+                            disabled={isExecuting}
+                            variant="primary"
+                            size="md"
+                            className="font-semibold tracking-wide shadow-md shadow-blue-600/20"
+                            title="Execute Code (Ctrl+Enter)"
+                        >
+                            {isExecuting ? (
+                                <>
+                                    <Loader2 size={15} className="animate-spin" />
+                                    <span className="hidden sm:inline text-xs">Running...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Play size={14} fill="currentColor" />
+                                    <span className="text-xs">Run</span>
+                                    <span className="hidden lg:inline-block text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/20 text-white/90">
+                                        Ctrl+Enter
+                                    </span>
+                                </>
+                            )}
+                        </LaserPillButton>
+                    </div>
 
                     {/* Terminal Toggle Button (Desktop) */}
                     <button
@@ -577,29 +592,29 @@ const EditorPage = () => {
                     {/* View Transitions Circular Wave Theme Toggle */}
                     <button
                         onClick={handleThemeToggle}
-                        className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-gray-100 dark:bg-[#1f1f1f] text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-white/10 hover:border-blue-500/40 dark:hover:border-white/20 transition-all duration-300 shadow-sm active:translate-y-[0.5px]"
+                        className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center bg-gray-100 dark:bg-[#1f1f1f] text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-white/10 hover:border-blue-500/40 dark:hover:border-white/20 transition-all duration-300 shadow-sm active:scale-95"
                         title={`Switch to ${isDark ? 'Light' : 'Dark'} mode`}
                     >
                         {isDark ? (
-                            <Sun size={17} className="text-amber-400" />
+                            <Sun size={16} className="text-amber-400" />
                         ) : (
-                            <Moon size={17} className="text-gray-700" />
+                            <Moon size={16} className="text-gray-700" />
                         )}
                     </button>
 
                     {/* Mobile Collaborators Drawer Trigger */}
                     <button
                         onClick={() => setMobileDrawerOpen(true)}
-                        className="sm:hidden w-9 h-9 rounded-full flex items-center justify-center bg-gray-100 dark:bg-[#1f1f1f] text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-white/10"
+                        className="sm:hidden w-8 h-8 rounded-full flex items-center justify-center bg-gray-100 dark:bg-[#1f1f1f] text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-white/10 active:scale-95"
                         title="Collaborators"
                     >
-                        <Users size={16} />
+                        <Users size={15} />
                     </button>
                 </div>
             </header>
 
             {/* 2. MAIN WORKSPACE WITH RESIZABLE DRAGGABLE SIDEBAR */}
-            <div className="flex-1 flex overflow-hidden relative">
+            <div className="flex-1 flex overflow-hidden relative pb-[64px] sm:pb-0">
                 {/* Desktop Collapsible & Draggable Sidebar */}
                 <aside
                     style={{
@@ -706,6 +721,7 @@ const EditorPage = () => {
                                     codeRef.current = code;
                                 }}
                                 onRunCode={handleRunCode}
+                                isVisible={activeTabId === 'code'}
                             />
                         </div>
 
@@ -899,16 +915,26 @@ const EditorPage = () => {
 
             {/* 4. MOBILE BOTTOM NAVIGATION */}
             <MobileBottomNav
-                activeTab={mobileActiveView}
+                activeTab={activeTabId.startsWith('canvas') ? 'canvas' : 'code'}
+                canvasCount={tabs.filter((t) => t.type === 'canvas').length}
+                isConsoleOpen={isConsoleOpen}
                 onTabChange={(tab) => {
-                    setMobileActiveView(tab);
                     if (tab === 'collaborators') {
                         setMobileDrawerOpen(true);
                     } else if (tab === 'terminal') {
-                        setIsConsoleOpen(true);
+                        setIsConsoleOpen((prev) => !prev);
                         setActiveConsoleTab('output');
-                    } else if (tab === 'editor') {
+                    } else if (tab === 'code') {
                         setIsConsoleOpen(false);
+                        setActiveTabId('code');
+                    } else if (tab === 'canvas') {
+                        setIsConsoleOpen(false);
+                        const firstCanvas = tabs.find((t) => t.type === 'canvas');
+                        if (firstCanvas) {
+                            setActiveTabId(firstCanvas.id);
+                        } else {
+                            openCanvasTab();
+                        }
                     }
                 }}
                 clientCount={clients.length}

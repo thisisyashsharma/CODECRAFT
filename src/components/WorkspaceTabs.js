@@ -49,7 +49,7 @@ const WorkspaceTabs = ({ tabs, activeTabId, onSwitchTab, onCloseTab, onNewCanvas
                                     e.stopPropagation();
                                     onCloseTab(tab.id);
                                 }}
-                                className="ml-0.5 p-0.5 rounded-full opacity-0 group-hover:opacity-100 hover:bg-gray-300 dark:hover:bg-white/10 transition-all"
+                                className="ml-0.5 p-0.5 rounded-full opacity-60 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-gray-300 dark:hover:bg-white/10 transition-all"
                                 title="Close Tab"
                             >
                                 <X size={11} />
