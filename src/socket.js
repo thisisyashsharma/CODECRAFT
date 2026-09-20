@@ -7,6 +7,8 @@ export const initSocket = () => {
     } else if (typeof window !== 'undefined') {
         if (window.location.port === '3000') {
             backendUrl = `${window.location.protocol}//${window.location.hostname}:5000`;
+        } else if (window.location.hostname.includes('vercel.app')) {
+            backendUrl = 'https://codecraft-138v.onrender.com';
         } else {
             backendUrl = window.location.origin;
         }

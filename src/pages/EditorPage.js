@@ -348,8 +348,12 @@ const EditorPage = () => {
 
         try {
             let backendUrl = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/+$/, '');
-            if (!backendUrl && typeof window !== 'undefined' && window.location.port === '3000') {
-                backendUrl = `${window.location.protocol}//${window.location.hostname}:5000`;
+            if (!backendUrl && typeof window !== 'undefined') {
+                if (window.location.port === '3000') {
+                    backendUrl = `${window.location.protocol}//${window.location.hostname}:5000`;
+                } else if (window.location.hostname.includes('vercel.app')) {
+                    backendUrl = 'https://codecraft-138v.onrender.com';
+                }
             }
             const res = await fetch(`${backendUrl}/api/execute`, {
                 method: 'POST',
